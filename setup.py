@@ -4,11 +4,11 @@ from setuptools import find_packages, setup
 
 setup(
     name="src",
-    version="0.0.1",
-    description="Describe Your Cool Project",
-    author="",
-    author_email="",
-    url="https://github.com/user/project",
+    version="0.1.0",
+    description="Molecule Generator",
+    author="David M. Rogers",
+    author_email="predictivestatmech gmail",
+    url="https://github.com/frobnitzem/mol_generator",
     install_requires=["lightning", "hydra-core"],
     packages=find_packages(),
     # use this to customize global commands available in the terminal after installing the package
