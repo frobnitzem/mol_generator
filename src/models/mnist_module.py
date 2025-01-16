@@ -7,61 +7,33 @@ from torchmetrics.classification.accuracy import Accuracy
 
 
 class MNISTLitModule(LightningModule):
-    """Example of a `LightningModule` for MNIST classification.
-
-    A `LightningModule` implements 8 key methods:
-
-    ```python
-    def __init__(self):
-    # Define initialization code here.
-
-    def setup(self, stage):
-    # Things to setup before each stage, 'fit', 'validate', 'test', 'predict'.
-    # This hook is called on every process when using DDP.
-
-    def training_step(self, batch, batch_idx):
-    # The complete training step.
-
-    def validation_step(self, batch, batch_idx):
-    # The complete validation step.
-
-    def test_step(self, batch, batch_idx):
-    # The complete test step.
-
-    def predict_step(self, batch, batch_idx):
-    # The complete predict step.
-
-    def configure_optimizers(self):
-    # Define and configure optimizers and LR schedulers.
-    ```
-
-    Docs:
-        https://lightning.ai/docs/pytorch/latest/common/lightning_module.html
-    """
-
-    def __init__(
-        self,
-        net: torch.nn.Module,
-        optimizer: torch.optim.Optimizer,
-        scheduler: torch.optim.lr_scheduler,
-        compile: bool,
-    ) -> None:
-        """Initialize a `MNISTLitModule`.
-
-        :param net: The model to train.
-        :param optimizer: The optimizer to use for training.
-        :param scheduler: The learning rate scheduler to use for training.
-        """
+    def __init__(self, input_dims) -> None:
+        
         super().__init__()
+        
+        # construct the INN (not containing any operations so far)
+        self.net = Ff.SequenceINN(*input_dims)
 
+        def subnet_fc(dims_in, dims_out):
+            '''Return a feed-forward subnetwork, to be used in the coupling blocks below'''
+            return nn.Sequential(nn.Linear(dims_in, 128), nn.ReLU(),
+                                 nn.Linear(128,  128), nn.ReLU(),
+                                 nn.Linear(128,  dims_out))
+    
+        # append coupling blocks to the sequence of operations
+        for k in range(8):
+            self.net.append(Fm.AllInOneBlock, subnet_constructor=subnet_fc)
+
+        self.parameters = [p for p in self.inn.parameters() if p.requires_grad]
+        for p in self.parameters:
+            p.data = 0.01 * torch.randn_like(p)
+        
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
 
-        self.net = net
-
         # loss function
-        self.criterion = torch.nn.CrossEntropyLoss()
+        self.criterion = lambda z, log_j : (z*z).sum(1) * 0.5 - log_j
 
         # metric objects for calculating and averaging accuracy across batches
         self.train_acc = Accuracy(task="multiclass", num_classes=10)
@@ -93,7 +65,7 @@ class MNISTLitModule(LightningModule):
         self.val_acc_best.reset()
 
     def model_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor]
+        self, batch: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Perform a single model step on a batch of data.
 
@@ -104,11 +76,10 @@ class MNISTLitModule(LightningModule):
             - A tensor of predictions.
             - A tensor of target labels.
         """
-        x, y = batch
-        logits = self.forward(x)
-        loss = self.criterion(logits, y)
-        preds = torch.argmax(logits, dim=1)
-        return loss, preds, y
+ 
+        z, log_j = self.forward(x)
+        loss = self.criterion(z, log_j)
+        return loss
 
     def training_step(
         self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
@@ -120,7 +91,7 @@ class MNISTLitModule(LightningModule):
         :param batch_idx: The index of the current batch.
         :return: A tensor of losses between model predictions and targets.
         """
-        loss, preds, targets = self.model_step(batch)
+        loss = self.model_step(batch)
 
         # update and log metrics
         self.train_loss(loss)
